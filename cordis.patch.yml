@@ -1,0 +1,4 @@
+- insert:
+    - id: local-transcribe
+      name: 'dsh-local-transcribe'
+      config: {}

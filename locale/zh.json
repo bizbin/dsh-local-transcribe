@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "本地语音转文本（whisper.cpp）",
+    "description": "在本机用 whisper.cpp 本地模型把音频/视频转成文字，完全离线。为所有会话的智能体提供 transcribe_audio 工具。"
+  }
+}

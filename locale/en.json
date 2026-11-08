@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Local speech-to-text (whisper.cpp)",
+    "description": "Transcribes audio and video files on this machine with a local whisper.cpp model — fully offline. Gives agents the transcribe_audio tool in every session."
+  }
+}
