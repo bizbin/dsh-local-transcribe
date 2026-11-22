@@ -75,7 +75,17 @@ window.__ModuleLoader__.load({
         candidatesLoading: '查询中…',
         candidatesEmpty: '该词看起来没有明显问题',
         applyCandidate: '点击候选词直接替换',
-        close: '关闭'
+        close: '关闭',
+        diarize: '说话人分离',
+        diarizeNum: '人数',
+        diarizeAuto: '自动',
+        diarizeSlow: '（较慢：约音频时长的 0.6 倍）',
+        'diarizing-setup': '正在准备说话人模型（首次使用需下载）…',
+        diarizing: '正在分离说话人…',
+        speaker: '说话人',
+        speakerAll: '全部',
+        speakerSegs: '段',
+        speakerFilterHint: '点击图例筛选该说话人'
       },
       en: {
         panelLabel: 'Transcribe',
@@ -139,7 +149,17 @@ window.__ModuleLoader__.load({
         candidatesLoading: 'Looking up…',
         candidatesEmpty: 'This word looks fine',
         applyCandidate: 'Click a candidate to replace the word',
-        close: 'Close'
+        close: 'Close',
+        diarize: 'Speaker separation',
+        diarizeNum: 'Speakers',
+        diarizeAuto: 'Auto',
+        diarizeSlow: '(slow: ~0.6× the audio duration)',
+        'diarizing-setup': 'Preparing speaker models (downloaded on first use)…',
+        diarizing: 'Separating speakers…',
+        speaker: 'Speaker',
+        speakerAll: 'All',
+        speakerSegs: 'segments',
+        speakerFilterHint: 'Click a legend chip to filter by speaker'
       }
     }
 
@@ -158,6 +178,8 @@ window.__ModuleLoader__.load({
     }
 
     const AUDIO_EXTS = ['.m4a', '.mp3', '.wav', '.flac', '.aac', '.ogg', '.opus', '.wma', '.m4b', '.amr', '.aiff', '.aif', '.caf', '.mp4', '.mov', '.mkv', '.avi', '.webm', '.m4v', '.ts', '.3gp', '.mpg', '.mpeg']
+
+    const SPEAKER_COLORS = ['#3b82f6', '#22c55e', '#f59e0b', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316', '#64748b']
 
     function useDict(ctx) {
       const [, force] = React.useReducer(c => c + 1, 0)
@@ -231,6 +253,9 @@ window.__ModuleLoader__.load({
           const [fixedTokens, setFixedTokens] = React.useState({})
           const [suggest, setSuggest] = React.useState(null)
           const activeRefs = React.useRef({})
+          const [diarize, setDiarize] = React.useState(false)
+          const [numSpeakers, setNumSpeakers] = React.useState(0)
+          const [speakerFilter, setSpeakerFilter] = React.useState(0)
 
           const segOffsets = React.useMemo(() => {
             if (result === null) return []
@@ -262,7 +287,7 @@ window.__ModuleLoader__.load({
 
           // Poll job status while running.
           React.useEffect(() => {
-            if (job === null || !['converting', 'transcribing', 'composing'].includes(job.phase)) return
+            if (job === null || !['converting', 'transcribing', 'composing', 'diarizing-setup', 'diarizing'].includes(job.phase)) return
             const timer = setInterval(() => {
               rpc('status', { jobId: job.jobId }).then(snapshot => {
                 setJob(snapshot)
@@ -473,9 +498,10 @@ window.__ModuleLoader__.load({
             setFixedTokens({})
             setSuggest(null)
             setActiveSeg(-1)
+            setSpeakerFilter(0)
             const name = baseName.trim() || `${files[0].name.replace(/\.[^.]+$/, '')}${files.length > 1 ? `等${files.length}个文件` : ''}`
             const dir = outputDir.trim() || files[0].path.slice(0, files[0].path.lastIndexOf('/'))
-            rpc('start', { paths: files.map(f => f.path), language, prompt, hotwords, baseName: name, outputDir: dir, markdown: true })
+            rpc('start', { paths: files.map(f => f.path), language, prompt, hotwords, baseName: name, outputDir: dir, markdown: true, diarize, numSpeakers: diarize ? numSpeakers : 0 })
               .then(value => { setJob({ jobId: value.jobId, phase: 'converting', progress: 0, error: null, result: null, files: [] }) })
               .catch(error => { setBusy(false); setListError(String(error && error.message ? error.message : error)) })
           }
@@ -505,6 +531,7 @@ window.__ModuleLoader__.load({
             setFixedTokens({})
             setSuggest(null)
             setActiveSeg(-1)
+            setSpeakerFilter(0)
             setBusy(false)
           }
 
@@ -517,7 +544,17 @@ window.__ModuleLoader__.load({
           }
 
           const totalDuration = files.reduce((sum, f) => sum + (f.durationSec ?? 0), 0)
-          const running = job !== null && ['converting', 'transcribing', 'composing'].includes(job.phase)
+          const running = job !== null && ['converting', 'transcribing', 'composing', 'diarizing-setup', 'diarizing'].includes(job.phase)
+
+          const speakerCounts = React.useMemo(() => {
+            if (result === null) return {}
+            const counts = {}
+            for (const seg of result.segments) {
+              if (seg.speaker !== undefined) counts[seg.speaker] = (counts[seg.speaker] ?? 0) + 1
+            }
+            return counts
+          }, [result])
+          const speakerIds = Object.keys(speakerCounts).map(Number).sort((a, b) => a - b)
 
           return h('div', {
             className: 'lt-page',
@@ -606,6 +643,16 @@ window.__ModuleLoader__.load({
                     h('select', { value: language, disabled: running, onChange: e => setLanguage(e.target.value) },
                       h('option', { value: 'zh' }, '中文 zh'), h('option', { value: 'en' }, 'English en'), h('option', { value: 'auto' }, 'auto'))
                   ),
+                  h('label', { className: 'lt-field' },
+                    h('input', { type: 'checkbox', checked: diarize, disabled: running, onChange: e => setDiarize(e.target.checked) }),
+                    dict.diarize
+                  ),
+                  diarize ? h('label', { className: 'lt-field' }, `${dict.diarizeNum} `,
+                    h('select', { value: numSpeakers, disabled: running, onChange: e => setNumSpeakers(Number(e.target.value)) },
+                      h('option', { value: 0 }, dict.diarizeAuto),
+                      [2, 3, 4, 5].map(n => h('option', { key: n, value: n }, String(n)))
+                    )
+                  ) : null,
                   h('label', { className: 'lt-field lt-field-grow' }, `${dict.hotwords} `,
                     h('input', { type: 'text', value: hotwords, disabled: running, placeholder: dict.hotwordsPlaceholder, onChange: e => setHotwords(e.target.value) })),
                   h('label', { className: 'lt-field lt-field-grow' }, `${dict.prompt} `,
@@ -613,8 +660,9 @@ window.__ModuleLoader__.load({
                 ),
                 running ? h('div', { className: 'lt-progress-wrap' },
                   h('div', { className: 'lt-progress-track' },
-                    h('div', { className: 'lt-progress-fill', style: { width: `${job.progress ?? 0}%` } })),
-                  h('div', { className: 'lt-muted' }, dict[job.phase] + (job.phase === 'transcribing' ? ` ${job.progress ?? 0}%` : ''))
+                    h('div', { className: 'lt-progress-fill', style: { width: `${Math.max(0, job.progress ?? 0)}%` } })),
+                  h('div', { className: 'lt-muted' },
+                    dict[job.phase] + (job.phase === 'transcribing' || job.phase === 'diarizing-setup' ? ` ${job.progress ?? 0}%` : '') + (job.phase === 'diarizing' ? ` ${dict.diarizeSlow}` : ''))
                 ) : null,
                 job !== null && job.phase === 'error' ? h('div', { className: 'lt-error' }, `${dict.failed}: ${job.error}`) : null,
                 job !== null && job.phase === 'cancelled' ? h('div', { className: 'lt-muted' }, dict.cancelled) : null,
@@ -664,17 +712,32 @@ window.__ModuleLoader__.load({
                   h('div', { className: 'lt-section-title' }, dict.transcript),
                   h('textarea', { className: 'lt-textarea', value: text, onChange: e => setText(e.target.value), spellCheck: false }),
                   h('div', { className: 'lt-section-title' }, dict.segments),
-                  h('div', { className: 'lt-segments' },
-                    result.segments.map((seg, index) => h('div', {
-                      key: index,
-                      className: 'lt-seg-row' + (index === activeSeg ? ' lt-seg-active' : ''),
-                      title: dict.seekHint,
-                      ref: el => { activeRefs.current[index] = el },
-                      onClick: () => seekToSegment(seg)
+                  speakerIds.length > 1 ? h('div', { className: 'lt-legend', title: dict.speakerFilterHint },
+                    h('button', { className: 'lt-legend-chip' + (speakerFilter === 0 ? ' lt-on' : ''), onClick: () => setSpeakerFilter(0) }, dict.speakerAll),
+                    speakerIds.map(id => h('button', {
+                      key: id,
+                      className: 'lt-legend-chip' + (speakerFilter === id ? ' lt-on' : ''),
+                      onClick: () => setSpeakerFilter(speakerFilter === id ? 0 : id)
                     },
-                      h('span', { className: 'lt-seg-time' }, fmtClock(seg.startMs)),
-                      h('span', { className: 'lt-seg-text' }, renderSegmentText(seg, index)))
-                    )
+                      h('span', { className: 'lt-legend-dot', style: { background: SPEAKER_COLORS[(id - 1) % SPEAKER_COLORS.length] } }),
+                      `${dict.speaker}${id} · ${speakerCounts[id]} ${dict.speakerSegs}`
+                    ))
+                  ) : null,
+                  h('div', { className: 'lt-segments' },
+                    result.segments.map((seg, index) => {
+                      if (speakerFilter !== 0 && seg.speaker !== speakerFilter) return null
+                      return h('div', {
+                        key: index,
+                        className: 'lt-seg-row' + (index === activeSeg ? ' lt-seg-active' : ''),
+                        style: { borderLeftColor: seg.speaker !== undefined ? SPEAKER_COLORS[(seg.speaker - 1) % SPEAKER_COLORS.length] : 'transparent' },
+                        title: dict.seekHint,
+                        ref: el => { activeRefs.current[index] = el },
+                        onClick: () => seekToSegment(seg)
+                      },
+                        seg.speaker !== undefined ? h('span', { className: 'lt-spk-badge', style: { background: SPEAKER_COLORS[(seg.speaker - 1) % SPEAKER_COLORS.length] } }, `S${seg.speaker}`) : null,
+                        h('span', { className: 'lt-seg-time' }, fmtClock(seg.startMs)),
+                        h('span', { className: 'lt-seg-text' }, renderSegmentText(seg, index)))
+                    })
                   ),
                   suggest !== null ? h('div', {
                     className: 'lt-popover',
@@ -736,6 +799,7 @@ const CSS = `
 .lt-options { display: flex; gap: 10px; padding: 10px 12px; border-bottom: 1px solid var(--dsw-alias-border-l1); flex-wrap: wrap; }
 .lt-field { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--dsw-alias-label-secondary); }
 .lt-field select, .lt-field input { background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-primary); border: 1px solid var(--dsw-alias-border-l2); border-radius: 6px; padding: 4px 8px; font-size: 12px; }
+.lt-field input[type='checkbox'] { width: 15px; height: 15px; accent-color: var(--dsw-alias-brand-primary); }
 .lt-field-grow { flex: 1; min-width: 200px; }
 .lt-field-grow input { width: 100%; }
 .lt-btn { background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-primary); border: 1px solid var(--dsw-alias-border-l2); border-radius: 8px; padding: 6px 12px; font-size: 12px; cursor: pointer; }
@@ -789,7 +853,12 @@ const CSS = `
 .lt-edit-after { color: var(--dsw-alias-state-success-primary); font-weight: 600; }
 .lt-edit-reason { color: var(--dsw-alias-label-secondary); font-size: 11px; }
 .lt-edit-actions { display: flex; gap: 6px; flex-shrink: 0; }
-.lt-seg-active { background: var(--dsw-alias-bg-layer-2); border-left: 3px solid var(--dsw-alias-brand-primary); }
+.lt-seg-active { background: var(--dsw-alias-bg-layer-2); }
+.lt-spk-badge { flex-shrink: 0; color: #fff; font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 8px; }
+.lt-legend { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.lt-legend-chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 999px; background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-primary); font-size: 12px; cursor: pointer; }
+.lt-legend-chip.lt-on { border-color: var(--dsw-alias-brand-primary); }
+.lt-legend-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
 .lt-lowconf { background: none; color: var(--dsw-alias-state-warn-primary); text-decoration: underline dotted; text-underline-offset: 3px; cursor: pointer; border-radius: 3px; padding: 0 1px; }
 .lt-lowconf:hover { background: var(--dsw-alias-bg-layer-2); }
 .lt-lowconf.lt-fixed { color: var(--dsw-alias-state-success-primary); text-decoration: none; cursor: default; }

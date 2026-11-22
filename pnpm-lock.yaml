@@ -1,0 +1,22 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    dependencies:
+      sherpa-onnx:
+        specifier: ^2.0.2
+        version: 2.0.2
+
+packages:
+
+  sherpa-onnx@2.0.2:
+    resolution: {integrity: sha512-vw0EKzJ8rBZ6asLPp1nrS0s3MGmWwi66YJjb+NEc3wbsFfGMCuV0gAb01BjbVbEONLYrEmIjlAzW+P8caD0bRA==}
+
+snapshots:
+
+  sherpa-onnx@2.0.2: {}
