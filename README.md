@@ -3,7 +3,9 @@
 A [DeepSeek Harness (DSH)](https://github.com/deepseek-ai) plugin for **fully-local speech-to-text** powered by [whisper.cpp](https://github.com/ggml-org/whisper.cpp). Everything runs on your machine — nothing is uploaded.
 
 - 🎛 **Visual panel** (sidebar icon): drag & drop or browse local audio files, pick several and merge them into one recording, transcribe with live progress, preview the full text with a per-segment timeline, play back the merged audio, and **edit the transcript in place** before saving.
-- 🤖 **Agent tool** `transcribe_audio`: every agent session can transcribe one file or merge several files (in order) into one continuous transcript.
+- ✨ **Smart proofreading** (LLM-powered): one click runs a *faithful-correction* pass over the transcript — only homophone/terminology/punctuation mistakes are fixed, never rewrites. Suggestions come back as a **diff review list** (before → after + reason); accept or reject each one, or accept all.
+- 🔥 **Hot words**: a topic/terminology field feeds both the whisper prompt (fewer homophone errors at transcription time) and the proofreader (term-aware corrections).
+- 🤖 **Agent tool** `transcribe_audio`: every agent session can transcribe one file or merge several files (in order) into one continuous transcript, with optional `hotwords`.
 - 🈶 Supports m4a / mp3 / wav / flac / aac / ogg / opus / wma / m4b / amr / aiff / aif / caf and video files (mp4 / mov / mkv / avi / webm / m4v / ts / 3gp / mpg / mpeg).
 - 🔒 Panel–host communication is loopback-only (`127.0.0.1` / `localhost`), owned by the plugin context.
 
@@ -53,10 +55,14 @@ In your profile's `cordis.patch.yml`, set the `local-transcribe` row's `config`:
 | `language` | `zh` | default language code |
 | `prompt` | `以下是普通话的句子。` | initial whisper prompt |
 | `threads` | `10` | whisper-cli thread count |
+| `proofreadProvider` | `deepseek-official` | DSH llm-service provider route used for smart proofreading |
+| `proofreadModel` | `deepseek-v4-pro` | model used for smart proofreading |
 
 ## Panel
 
-Open the waveform icon in the sidebar. Then either **drag audio files onto the panel** (they are uploaded to `~/.dsh/storages/local-transcribe-uploads/`, 500 MB per file) or browse the filesystem. Order the selected files, pick an output directory, language and prompt, and press **Transcribe**. While running you see the phase and percentage; when done you get the transcript, a segment timeline, and merged-audio playback. Edit the text and press **Save edits** — the plugin rewrites `<name>_原始转写.txt` and regenerates `<name>_转写稿.md`.
+Open the waveform icon in the sidebar. Then either **drag audio files onto the panel** (they are uploaded to `~/.dsh/storages/local-transcribe-uploads/`, 500 MB per file) or browse the filesystem. Order the selected files, fill in **hot words** (names/terms/topics), pick an output directory, language and prompt, and press **Transcribe**. While running you see the phase and percentage; when done you get the transcript, a segment timeline, and merged-audio playback.
+
+Press **Smart proofread** to run the faithful-correction pass: the suggestions appear as a diff list (`before → after` with a reason). Accept or reject each suggestion, or accept all — accepted edits are applied to the editable transcript immediately. Then press **Save edits** — the plugin rewrites `<name>_原始转写.txt` and regenerates `<name>_转写稿.md`. The proofreader uses the DSH `llm` service (`proofreadProvider` / `proofreadModel` config), so it works with whatever provider your profile has configured.
 
 Outputs (next to the first input, or `output_dir`):
 
@@ -66,7 +72,7 @@ Outputs (next to the first input, or `output_dir`):
 
 ## Agent tool
 
-`transcribe_audio` — one file via `path`, or several merged in order via `paths`; `language`, `prompt`, `output_dir`, `output_name`, `markdown`, `keep_wav` options. The tool returns the full text, the segment timeline, and the output file paths.
+`transcribe_audio` — one file via `path`, or several merged in order via `paths`; `language`, `prompt`, `hotwords` (comma-separated words injected into the whisper prompt), `output_dir`, `output_name`, `markdown`, `keep_wav` options. The tool returns the full text, the segment timeline, and the output file paths.
 
 ## Security notes
 
@@ -84,7 +90,9 @@ Outputs (next to the first input, or `output_dir`):
 基于 [whisper.cpp](https://github.com/ggml-org/whisper.cpp) 的 DeepSeek Harness（DSH）插件，**完全本地**完成语音转文本，音频不出本机。
 
 - **可视化面板**（侧边栏波形图标）：拖拽或浏览选择音频文件，多个文件按顺序合并为一段整体识别，实时显示进度；完成后可预览全文与分段时间轴、试听合并音频、**就地编辑文本并保存**（重写 txt 并重新生成 markdown）。
-- **智能体工具** `transcribe_audio`：任意会话可调用，支持单个文件或 `paths` 数组合并识别。
+- **智能勘误**（LLM）：一键执行「忠实勘误」——只改同音字/术语/标点错误，绝不改写语义；结果以 **diff 审阅列表**（原文 → 修正 + 理由）呈现，逐条接受/拒绝或全部接受，接受后立即应用到可编辑文本。
+- **主题词**：主题/术语输入框同时喂给 whisper prompt（转录时减少同音错字）和智能勘误（按词表修正术语）。
+- **智能体工具** `transcribe_audio`：任意会话可调用，支持单个文件或 `paths` 数组合并识别，带 `hotwords` 参数。
 - 支持 m4a / mp3 / wav / flac / aac / ogg / opus / wma / m4b / amr / aiff / aif / caf 等音频与 mp4 / mov / mkv 等视频。
 - 面板与宿主通过仅限环回地址的 HTTP 路由通信，随插件卸载自动注销。
 

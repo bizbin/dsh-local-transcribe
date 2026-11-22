@@ -1,6 +1,6 @@
 {
   "name": "dsh-local-transcribe",
-  "version": "1.0.0",
+  "version": "1.1.2",
   "description": "DeepSeek Harness (DSH) plugin for fully-local speech-to-text with whisper.cpp: a visual panel to pick, merge, preview, and edit audio files, plus a transcribe_audio agent tool.",
   "type": "module",
   "license": "MIT",
@@ -22,13 +22,13 @@
     "offline"
   ],
   "exports": {
-    ".": "./index.js",
+    ".": "./lib/main.js",
     "./client": "./client.js",
     "./locale/*.json": "./locale/*.json",
     "./icon": "./icon.svg"
   },
   "files": [
-    "index.js",
+    "lib/main.js",
     "client.js",
     "cordis.patch.yml",
     "locale/*.json",
@@ -42,7 +42,9 @@
     "client": {
       "platform": "web",
       "immediately": true,
-      "inject": ["@deepseek-ai/dsh-client-ui-layout"]
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-layout"
+      ]
     }
   }
 }

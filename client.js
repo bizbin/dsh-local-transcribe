@@ -56,7 +56,19 @@ window.__ModuleLoader__.load({
         dropHint: '也可以把音频文件直接拖进本面板（支持 m4a / mp3 / wav / flac / mp4 等）',
         dragActive: '松开鼠标即可添加文件',
         uploading: '上传中',
-        uploadFailed: '上传失败'
+        uploadFailed: '上传失败',
+        hotwords: '主题词',
+        hotwordsPlaceholder: '人名、术语、主题（逗号分隔），用于提升识别与勘误准确率',
+        proofread: '智能勘误',
+        proofreading: '智能勘误中…',
+        editsFound: '处修改建议',
+        noEdits: '未发现需要修正的地方 ✓',
+        accept: '接受',
+        reject: '拒绝',
+        acceptAll: '全部接受',
+        rejectAll: '全部拒绝',
+        appliedNote: '已应用修改，记得点「保存修改」写回文件',
+        proofreadFailed: '勘误失败'
       },
       en: {
         panelLabel: 'Transcribe',
@@ -101,7 +113,19 @@ window.__ModuleLoader__.load({
         dropHint: 'You can also drag audio files straight into this panel (m4a / mp3 / wav / flac / mp4 …)',
         dragActive: 'Drop to add the files',
         uploading: 'Uploading',
-        uploadFailed: 'Upload failed'
+        uploadFailed: 'Upload failed',
+        hotwords: 'Hot words',
+        hotwordsPlaceholder: 'Names, terms, topics (comma-separated) — improves transcription and proofreading',
+        proofread: 'Smart proofread',
+        proofreading: 'Proofreading…',
+        editsFound: 'suggested edits',
+        noEdits: 'Nothing to correct ✓',
+        accept: 'Accept',
+        reject: 'Reject',
+        acceptAll: 'Accept all',
+        rejectAll: 'Reject all',
+        appliedNote: 'Edits applied — remember to press “Save edits”',
+        proofreadFailed: 'Proofreading failed'
       }
     }
 
@@ -184,6 +208,10 @@ window.__ModuleLoader__.load({
           const [dragging, setDragging] = React.useState(false)
           const [uploading, setUploading] = React.useState(0)
           const [uploadTotal, setUploadTotal] = React.useState(0)
+          const [hotwords, setHotwords] = React.useState('')
+          const [proofLoading, setProofLoading] = React.useState(false)
+          const [proofEdits, setProofEdits] = React.useState(null)
+          const [proofNote, setProofNote] = React.useState('')
 
           React.useEffect(() => {
             if (!browserOpen) return
@@ -284,15 +312,63 @@ window.__ModuleLoader__.load({
             })
           }
 
+          function applyEdit(current, edit) {
+            if (typeof current !== 'string') return current
+            const at = current.indexOf(edit.before)
+            if (at === -1) return current
+            return current.slice(0, at) + edit.after + current.slice(at + edit.before.length)
+          }
+
+          function startProofread() {
+            if (job === null || result === null || proofLoading) return
+            setProofLoading(true)
+            setProofEdits(null)
+            setProofNote('')
+            setListError('')
+            rpc('proofread', { jobId: job.jobId, terms: hotwords })
+              .then(value => {
+                setProofEdits(value.edits)
+                setProofLoading(false)
+              })
+              .catch(error => {
+                setProofLoading(false)
+                setListError(`${dict.proofreadFailed}: ${String(error && error.message ? error.message : error)}`)
+              })
+          }
+
+          function acceptEdit(index) {
+            if (proofEdits === null) return
+            const edit = proofEdits[index]
+            if (edit === undefined) return
+            setText(current => applyEdit(current, edit))
+            setProofEdits(proofEdits.filter((_, i) => i !== index))
+            setProofNote(dict.appliedNote)
+          }
+
+          function rejectEdit(index) {
+            if (proofEdits === null) return
+            setProofEdits(proofEdits.filter((_, i) => i !== index))
+          }
+
+          function acceptAllEdits() {
+            if (proofEdits === null || proofEdits.length === 0) return
+            const edits = proofEdits
+            setText(current => edits.reduce((acc, edit) => applyEdit(acc, edit), current))
+            setProofEdits([])
+            setProofNote(`${dict.appliedNote}（${edits.length}）`)
+          }
+
           function startTranscribe() {
             if (files.length === 0) return
             setBusy(true)
             setResult(null)
             setSavedNote('')
             setCopiedNote('')
+            setProofEdits(null)
+            setProofNote('')
             const name = baseName.trim() || `${files[0].name.replace(/\.[^.]+$/, '')}${files.length > 1 ? `等${files.length}个文件` : ''}`
             const dir = outputDir.trim() || files[0].path.slice(0, files[0].path.lastIndexOf('/'))
-            rpc('start', { paths: files.map(f => f.path), language, prompt, baseName: name, outputDir: dir, markdown: true })
+            rpc('start', { paths: files.map(f => f.path), language, prompt, hotwords, baseName: name, outputDir: dir, markdown: true })
               .then(value => { setJob({ jobId: value.jobId, phase: 'converting', progress: 0, error: null, result: null, files: [] }) })
               .catch(error => { setBusy(false); setListError(String(error && error.message ? error.message : error)) })
           }
@@ -317,6 +393,8 @@ window.__ModuleLoader__.load({
             setResult(null)
             setText('')
             setSavedNote('')
+            setProofEdits(null)
+            setProofNote('')
             setBusy(false)
           }
 
@@ -418,6 +496,8 @@ window.__ModuleLoader__.load({
                     h('select', { value: language, disabled: running, onChange: e => setLanguage(e.target.value) },
                       h('option', { value: 'zh' }, '中文 zh'), h('option', { value: 'en' }, 'English en'), h('option', { value: 'auto' }, 'auto'))
                   ),
+                  h('label', { className: 'lt-field lt-field-grow' }, `${dict.hotwords} `,
+                    h('input', { type: 'text', value: hotwords, disabled: running, placeholder: dict.hotwordsPlaceholder, onChange: e => setHotwords(e.target.value) })),
                   h('label', { className: 'lt-field lt-field-grow' }, `${dict.prompt} `,
                     h('input', { type: 'text', value: prompt, disabled: running, placeholder: '（默认：以下是普通话的句子。）', onChange: e => setPrompt(e.target.value) }))
                 ),
@@ -436,10 +516,33 @@ window.__ModuleLoader__.load({
                   h('div', { className: 'lt-result-head' },
                     h('span', { className: 'lt-muted' }, `${dict.done} · ${result.language} · ${fmtDuration(result.durationSec)} · ${result.segments.length} 段`),
                     h('span', { className: 'lt-spacer' }),
+                    h('button', { className: 'lt-btn lt-btn-small', disabled: proofLoading, onClick: startProofread }, proofLoading ? dict.proofreading : dict.proofread),
                     h('button', { className: 'lt-btn lt-btn-small', onClick: copyAll }, copiedNote || dict.copy),
                     h('button', { className: 'lt-btn lt-btn-small lt-btn-primary', onClick: saveEdits }, dict.save),
                     savedNote ? h('span', { className: 'lt-saved' }, savedNote) : null
                   ),
+                  proofNote ? h('div', { className: 'lt-saved' }, proofNote) : null,
+                  proofEdits !== null && proofEdits.length === 0 ? h('div', { className: 'lt-saved' }, dict.noEdits) : null,
+                  proofEdits !== null && proofEdits.length > 0 ? h('div', { className: 'lt-edit-list' },
+                    h('div', { className: 'lt-edit-head' },
+                      h('span', { className: 'lt-muted' }, `${proofEdits.length} ${dict.editsFound}`),
+                      h('span', { className: 'lt-spacer' }),
+                      h('button', { className: 'lt-btn lt-btn-small lt-btn-primary', onClick: acceptAllEdits }, dict.acceptAll),
+                      h('button', { className: 'lt-btn lt-btn-small', onClick: () => setProofEdits([]) }, dict.rejectAll)
+                    ),
+                    proofEdits.map((edit, index) => h('div', { key: `${index}:${edit.before}`, className: 'lt-edit-row' },
+                      h('div', { className: 'lt-edit-main' },
+                        h('span', { className: 'lt-edit-before' }, edit.before),
+                        h('span', { className: 'lt-edit-arrow' }, '→'),
+                        h('span', { className: 'lt-edit-after' }, edit.after),
+                        edit.reason ? h('span', { className: 'lt-edit-reason' }, edit.reason) : null
+                      ),
+                      h('div', { className: 'lt-edit-actions' },
+                        h('button', { className: 'lt-btn lt-btn-small lt-btn-primary', onClick: () => acceptEdit(index) }, dict.accept),
+                        h('button', { className: 'lt-btn lt-btn-small', onClick: () => rejectEdit(index) }, dict.reject)
+                      )
+                    ))
+                  ) : null,
                   job !== null ? h('audio', { className: 'lt-audio', controls: true, src: `${location.origin}/local-transcribe/play/${job.jobId}` }) : null,
                   h('div', { className: 'lt-section-title' }, dict.transcript),
                   h('textarea', { className: 'lt-textarea', value: text, onChange: e => setText(e.target.value), spellCheck: false }),
@@ -535,4 +638,13 @@ const CSS = `
 .lt-seg-row:last-child { border-bottom: none; }
 .lt-seg-time { flex-shrink: 0; color: var(--dsw-alias-brand-primary); font-variant-numeric: tabular-nums; }
 .lt-seg-text { flex: 1; }
+.lt-edit-list { display: flex; flex-direction: column; gap: 6px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 8px; padding: 8px; max-height: 220px; overflow-y: auto; }
+.lt-edit-head { display: flex; align-items: center; gap: 8px; }
+.lt-edit-row { display: flex; align-items: flex-start; gap: 8px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 8px; padding: 6px 8px; background: var(--dsw-alias-bg-layer-2); }
+.lt-edit-main { flex: 1; display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; font-size: 13px; }
+.lt-edit-before { color: var(--dsw-alias-state-error-primary); text-decoration: line-through; }
+.lt-edit-arrow { color: var(--dsw-alias-label-secondary); }
+.lt-edit-after { color: var(--dsw-alias-state-success-primary); font-weight: 600; }
+.lt-edit-reason { color: var(--dsw-alias-label-secondary); font-size: 11px; }
+.lt-edit-actions { display: flex; gap: 6px; flex-shrink: 0; }
 `
