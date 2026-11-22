@@ -68,7 +68,14 @@ window.__ModuleLoader__.load({
         acceptAll: '全部接受',
         rejectAll: '全部拒绝',
         appliedNote: '已应用修改，记得点「保存修改」写回文件',
-        proofreadFailed: '勘误失败'
+        proofreadFailed: '勘误失败',
+        seekHint: '点击段落从该处播放',
+        lowConfHint: '低置信词，点击查看候选纠正',
+        candidatesTitle: '候选纠正',
+        candidatesLoading: '查询中…',
+        candidatesEmpty: '该词看起来没有明显问题',
+        applyCandidate: '点击候选词直接替换',
+        close: '关闭'
       },
       en: {
         panelLabel: 'Transcribe',
@@ -125,7 +132,14 @@ window.__ModuleLoader__.load({
         acceptAll: 'Accept all',
         rejectAll: 'Reject all',
         appliedNote: 'Edits applied — remember to press “Save edits”',
-        proofreadFailed: 'Proofreading failed'
+        proofreadFailed: 'Proofreading failed',
+        seekHint: 'Click a segment to play from there',
+        lowConfHint: 'Low-confidence word — click for candidate corrections',
+        candidatesTitle: 'Candidate corrections',
+        candidatesLoading: 'Looking up…',
+        candidatesEmpty: 'This word looks fine',
+        applyCandidate: 'Click a candidate to replace the word',
+        close: 'Close'
       }
     }
 
@@ -212,6 +226,27 @@ window.__ModuleLoader__.load({
           const [proofLoading, setProofLoading] = React.useState(false)
           const [proofEdits, setProofEdits] = React.useState(null)
           const [proofNote, setProofNote] = React.useState('')
+          const audioRef = React.useRef(null)
+          const [activeSeg, setActiveSeg] = React.useState(-1)
+          const [fixedTokens, setFixedTokens] = React.useState({})
+          const [suggest, setSuggest] = React.useState(null)
+          const activeRefs = React.useRef({})
+
+          const segOffsets = React.useMemo(() => {
+            if (result === null) return []
+            const offsets = []
+            let total = 0
+            for (const seg of result.segments) {
+              offsets.push(total)
+              total += seg.text.length + 1
+            }
+            return offsets
+          }, [result])
+
+          React.useEffect(() => {
+            const el = activeRefs.current[activeSeg]
+            if (el && el.scrollIntoView) el.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+          }, [activeSeg])
 
           React.useEffect(() => {
             if (!browserOpen) return
@@ -358,6 +393,75 @@ window.__ModuleLoader__.load({
             setProofNote(`${dict.appliedNote}（${edits.length}）`)
           }
 
+          function onAudioTime(e) {
+            if (result === null) return
+            const ms = e.currentTarget.currentTime * 1000
+            let idx = -1
+            for (let i = 0; i < result.segments.length; i++) {
+              if (result.segments[i].startMs > ms) break
+              if (ms < result.segments[i].endMs) { idx = i; break }
+            }
+            setActiveSeg(idx)
+          }
+
+          function seekToSegment(seg) {
+            const audio = audioRef.current
+            if (audio === null) return
+            audio.currentTime = seg.startMs / 1000
+            audio.play().catch(() => {})
+          }
+
+          function openSuggest(seg, segIndex, tokenIndex, token, anchor, x, y) {
+            const key = `${segIndex}:${tokenIndex}`
+            setSuggest({ key, text: token.text, anchor, x, y, candidates: null, loading: true, error: '' })
+            rpc('suggest', { jobId: job === null ? '' : job.jobId, text: token.text, context: seg.text, terms: hotwords })
+              .then(candidates => setSuggest(cur => cur !== null && cur.key === key ? { ...cur, candidates, loading: false } : cur))
+              .catch(error => setSuggest(cur => cur !== null && cur.key === key ? { ...cur, error: String(error && error.message ? error.message : error), loading: false } : cur))
+          }
+
+          function applyCandidate(candidate) {
+            if (suggest === null) return
+            const original = suggest.text
+            const anchor = suggest.anchor
+            setText(current => {
+              if (current.slice(anchor, anchor + original.length) === original) {
+                return current.slice(0, anchor) + candidate + current.slice(anchor + original.length)
+              }
+              const at = current.indexOf(original)
+              if (at === -1) return current
+              return current.slice(0, at) + candidate + current.slice(at + original.length)
+            })
+            setFixedTokens(cur => ({ ...cur, [suggest.key]: candidate }))
+            setSuggest(null)
+            setProofNote(dict.appliedNote)
+          }
+
+          function renderSegmentText(seg, segIndex) {
+            const lows = seg.lowTokens ?? []
+            if (lows.length === 0) return seg.text
+            const parts = []
+            let cursor = 0
+            lows.forEach((token, tokenIndex) => {
+              const at = seg.text.indexOf(token.text, cursor)
+              const key = `${segIndex}:${tokenIndex}`
+              if (at === -1) return
+              if (at > cursor) parts.push(seg.text.slice(cursor, at))
+              const fixed = fixedTokens[key]
+              parts.push(h('mark', {
+                key,
+                className: 'lt-lowconf' + (fixed !== undefined ? ' lt-fixed' : ''),
+                title: dict.lowConfHint,
+                onClick: e => {
+                  e.stopPropagation()
+                  if (fixed === undefined) openSuggest(seg, segIndex, tokenIndex, token, (segOffsets[segIndex] ?? 0) + at, e.clientX, e.clientY)
+                }
+              }, fixed ?? token.text))
+              cursor = at + token.text.length
+            })
+            if (cursor < seg.text.length) parts.push(seg.text.slice(cursor))
+            return parts
+          }
+
           function startTranscribe() {
             if (files.length === 0) return
             setBusy(true)
@@ -366,6 +470,9 @@ window.__ModuleLoader__.load({
             setCopiedNote('')
             setProofEdits(null)
             setProofNote('')
+            setFixedTokens({})
+            setSuggest(null)
+            setActiveSeg(-1)
             const name = baseName.trim() || `${files[0].name.replace(/\.[^.]+$/, '')}${files.length > 1 ? `等${files.length}个文件` : ''}`
             const dir = outputDir.trim() || files[0].path.slice(0, files[0].path.lastIndexOf('/'))
             rpc('start', { paths: files.map(f => f.path), language, prompt, hotwords, baseName: name, outputDir: dir, markdown: true })
@@ -395,6 +502,9 @@ window.__ModuleLoader__.load({
             setSavedNote('')
             setProofEdits(null)
             setProofNote('')
+            setFixedTokens({})
+            setSuggest(null)
+            setActiveSeg(-1)
             setBusy(false)
           }
 
@@ -543,15 +653,47 @@ window.__ModuleLoader__.load({
                       )
                     ))
                   ) : null,
-                  job !== null ? h('audio', { className: 'lt-audio', controls: true, src: `${location.origin}/local-transcribe/play/${job.jobId}` }) : null,
+                  job !== null ? h('audio', {
+                    className: 'lt-audio',
+                    controls: true,
+                    ref: audioRef,
+                    src: `${location.origin}/local-transcribe/play/${job.jobId}`,
+                    onTimeUpdate: onAudioTime,
+                    onSeeked: onAudioTime
+                  }) : null,
                   h('div', { className: 'lt-section-title' }, dict.transcript),
                   h('textarea', { className: 'lt-textarea', value: text, onChange: e => setText(e.target.value), spellCheck: false }),
                   h('div', { className: 'lt-section-title' }, dict.segments),
                   h('div', { className: 'lt-segments' },
-                    result.segments.map((seg, index) => h('div', { key: index, className: 'lt-seg-row' },
+                    result.segments.map((seg, index) => h('div', {
+                      key: index,
+                      className: 'lt-seg-row' + (index === activeSeg ? ' lt-seg-active' : ''),
+                      title: dict.seekHint,
+                      ref: el => { activeRefs.current[index] = el },
+                      onClick: () => seekToSegment(seg)
+                    },
                       h('span', { className: 'lt-seg-time' }, fmtClock(seg.startMs)),
-                      h('span', { className: 'lt-seg-text' }, seg.text)))
-                  )
+                      h('span', { className: 'lt-seg-text' }, renderSegmentText(seg, index)))
+                    )
+                  ),
+                  suggest !== null ? h('div', {
+                    className: 'lt-popover',
+                    style: { left: Math.min(suggest.x, window.innerWidth - 340), top: Math.min(suggest.y + 12, window.innerHeight - 240) }
+                  },
+                    h('div', { className: 'lt-popover-head' },
+                      h('span', { className: 'lt-muted' }, `${dict.candidatesTitle}：「${suggest.text}」`),
+                      h('span', { className: 'lt-spacer' }),
+                      h('button', { className: 'lt-btn lt-btn-small', onClick: () => setSuggest(null) }, dict.close)
+                    ),
+                    suggest.loading ? h('div', { className: 'lt-muted' }, dict.candidatesLoading)
+                      : suggest.error ? h('div', { className: 'lt-error' }, suggest.error)
+                      : suggest.candidates === null || suggest.candidates.length === 0 ? h('div', { className: 'lt-muted' }, dict.candidatesEmpty)
+                      : h('div', { className: 'lt-cand-list' },
+                        h('div', { className: 'lt-muted' }, dict.applyCandidate),
+                        suggest.candidates.map((cand, i) => h('button', { key: i, className: 'lt-cand-row', onClick: () => applyCandidate(cand.text) },
+                          h('span', { className: 'lt-cand-text' }, cand.text),
+                          cand.reason ? h('span', { className: 'lt-cand-reason' }, cand.reason) : null)))
+                  ) : null
                 )
               )
             )
@@ -634,7 +776,7 @@ const CSS = `
 .lt-section-title { font-size: 12px; font-weight: 600; color: var(--dsw-alias-label-secondary); }
 .lt-textarea { flex: 1; min-height: 180px; resize: none; background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-primary); border: 1px solid var(--dsw-alias-border-l2); border-radius: 8px; padding: 10px; font-size: 13px; line-height: 1.7; font-family: inherit; }
 .lt-segments { flex: 0 1 40%; min-height: 80px; overflow-y: auto; border: 1px solid var(--dsw-alias-border-l1); border-radius: 8px; display: flex; flex-direction: column; }
-.lt-seg-row { display: flex; gap: 10px; padding: 5px 10px; border-bottom: 1px solid var(--dsw-alias-border-l1); font-size: 12px; }
+.lt-seg-row { display: flex; gap: 10px; padding: 5px 10px; border-bottom: 1px solid var(--dsw-alias-border-l1); border-left: 3px solid transparent; font-size: 12px; cursor: pointer; }
 .lt-seg-row:last-child { border-bottom: none; }
 .lt-seg-time { flex-shrink: 0; color: var(--dsw-alias-brand-primary); font-variant-numeric: tabular-nums; }
 .lt-seg-text { flex: 1; }
@@ -647,4 +789,15 @@ const CSS = `
 .lt-edit-after { color: var(--dsw-alias-state-success-primary); font-weight: 600; }
 .lt-edit-reason { color: var(--dsw-alias-label-secondary); font-size: 11px; }
 .lt-edit-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.lt-seg-active { background: var(--dsw-alias-bg-layer-2); border-left: 3px solid var(--dsw-alias-brand-primary); }
+.lt-lowconf { background: none; color: var(--dsw-alias-state-warn-primary); text-decoration: underline dotted; text-underline-offset: 3px; cursor: pointer; border-radius: 3px; padding: 0 1px; }
+.lt-lowconf:hover { background: var(--dsw-alias-bg-layer-2); }
+.lt-lowconf.lt-fixed { color: var(--dsw-alias-state-success-primary); text-decoration: none; cursor: default; }
+.lt-popover { position: fixed; z-index: 1100; width: 320px; background: var(--dsw-alias-bg-overlay); border: 1px solid var(--dsw-alias-border-l2); border-radius: 10px; padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+.lt-popover-head { display: flex; align-items: center; gap: 8px; }
+.lt-cand-list { display: flex; flex-direction: column; gap: 6px; }
+.lt-cand-row { display: flex; align-items: baseline; gap: 8px; width: 100%; background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-primary); border: 1px solid var(--dsw-alias-border-l1); border-radius: 8px; padding: 6px 10px; font-size: 13px; cursor: pointer; text-align: left; }
+.lt-cand-row:hover { border-color: var(--dsw-alias-brand-primary); }
+.lt-cand-text { color: var(--dsw-alias-state-success-primary); font-weight: 600; }
+.lt-cand-reason { color: var(--dsw-alias-label-secondary); font-size: 11px; }
 `
